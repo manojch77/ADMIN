@@ -71,8 +71,14 @@
         .btn-success:hover { background: #16a34a; }
         .btn-danger { background: #ef4444; color: white; }
         .btn-danger:hover { background: #dc2626; }
-        .btn-outline { background: transparent; border: 1px solid #e2e8f0; color: #475569; }
-        .btn-outline:hover { background: #f8fafc; border-color: #cbd5e1; }
+        .btn-outline { background: white; border: 1px solid #94a3b8; color: #475569; }
+        .btn-outline:hover { background: #f1f5f9; border-color: #64748b; }
+        .btn-action-edit { background: #3b82f6; color: white; border: none; }
+        .btn-action-edit:hover { background: #2563eb; }
+        .btn-action-move { background: #8b5cf6; color: white; border: none; }
+        .btn-action-move:hover { background: #7c3aed; }
+        .btn-action-delete { background: #ef4444; color: white; border: none; }
+        .btn-action-delete:hover { background: #dc2626; }
         .form-group { margin-bottom: 1rem; }
         .form-label { display: block; margin-bottom: 0.5rem; font-weight: 500; color: #374151; font-size: 0.875rem; }
         .form-input, .form-select { width: 100%; padding: 0.625rem 0.875rem; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 0.875rem; }
@@ -458,7 +464,7 @@
 
         function loadAllData() { loadStudents(); loadBuses(); loadFees(); loadNotifications(); }
 
-        function loadStudents() {
+function loadStudents() {
             firebase.database().ref('students').once('value', function(snapshot) {
                 studentsData = [];
                 if (snapshot.exists()) {
@@ -468,6 +474,7 @@
                 }
                 updateStudentsTable();
                 updateBusFilters();
+                updateNotificationStudentDropdown();
                 document.getElementById('total-students').textContent = studentsData.length;
             });
         }
@@ -568,12 +575,26 @@
         }
 
         function loadBusLocationsForMap() {
-            firebase.database().ref('buses').once('value', function(snapshot) {
+            // Use tracking Firebase app for live locations on dashboard map
+            firebase.database(trackingApp).ref('buses').once('value', function(snapshot) {
                 if (snapshot.exists()) {
                     snapshot.forEach(function(child) {
-                        var bus = child.val();
-                        if (bus.location && bus.location.lat) addBusMarkerToMap(child.key, bus);
+                        var busData = child.val();
+                        if (busData.location && busData.location.lat) {
+                            addBusMarkerToMap(child.key, busData);
+                            // Update busesData with location for status
+                            updateBusLocationInData(child.key, busData);
+                        }
                     });
+                }
+            });
+            
+            // Listen for real-time updates on dashboard map
+            firebase.database(trackingApp).ref('buses').on('child_changed', function(snapshot) {
+                var busData = snapshot.val();
+                if (busData.location && busData.location.lat) {
+                    addBusMarkerToMap(snapshot.key, busData);
+                    updateBusLocationInData(snapshot.key, busData);
                 }
             });
         }
@@ -583,15 +604,43 @@
             firebase.database(trackingApp).ref('buses').once('value', function(snapshot) {
                 if (snapshot.exists()) {
                     snapshot.forEach(function(child) {
-                        addBusMarkerToTracking(child.key, child.val());
+                        var busData = child.val();
+                        addBusMarkerToTracking(child.key, busData);
+                        // Update busesData with location for status
+                        updateBusLocationInData(child.key, busData);
                     });
                 }
             });
             
-            // Also listen for real-time updates
+            // Listen for real-time updates
             firebase.database(trackingApp).ref('buses').on('child_changed', function(snapshot) {
-                addBusMarkerToTracking(snapshot.key, snapshot.val());
+                var busData = snapshot.val();
+                addBusMarkerToTracking(snapshot.key, busData);
+                // Update busesData with location for status
+                updateBusLocationInData(snapshot.key, busData);
             });
+            
+            // Also listen for new buses being added
+            firebase.database(trackingApp).ref('buses').on('child_added', function(snapshot) {
+                var busData = snapshot.val();
+                addBusMarkerToTracking(snapshot.key, busData);
+                updateBusLocationInData(snapshot.key, busData);
+            });
+        }
+        
+        function updateBusLocationInData(busId, busData) {
+            // Update or add bus to busesData if it has location
+            var existingBus = busesData.find(function(b) { return b.id == busId; });
+            if (busData.location && busData.location.lat) {
+                if (existingBus) {
+                    existingBus.location = busData.location;
+                } else {
+                    busesData.push({ id: busId, location: busData.location, number: 'Bus ' + busId });
+                }
+                // Update UI to show active status
+                updateBusCards();
+                updateBusesTable();
+            }
         }
 
         function addBusMarkerToMap(busId, bus) {
@@ -629,7 +678,7 @@
                 var feeStatus = getStudentFeeStatus(student.rollNumber);
                 var bus = busesData.find(function(b) { return b.id == student.busId; });
                 var busNumber = bus ? bus.number : 'N/A';
-                return '<tr><td class="font-medium">' + student.rollNumber + '</td><td>' + (student.name || 'N/A') + '</td><td>' + (busNumber || 'Not Assigned') + '</td><td>' + (student.boardingPoint || 'N/A') + '</td><td>₹' + (student.busFee || 0) + '</td><td>' + (student.phone || 'N/A') + '</td><td><span class="badge ' + feeStatus.badge + '">' + feeStatus.status + '</span></td><td><div class="flex gap-2"><button class="btn btn-outline py-1 px-2" onclick="editStudent(\'' + student.rollNumber + '\')"><i class="fas fa-edit"></i></button><button class="btn btn-outline py-1 px-2" onclick="openMoveModal(\'' + student.rollNumber + '\')"><i class="fas fa-exchange-alt"></i></button><button class="btn btn-outline py-1 px-2 text-red-500" onclick="deleteStudent(\'' + student.rollNumber + '\')"><i class="fas fa-trash"></i></button></div></td></tr>';
+return '<tr><td class="font-medium">' + student.rollNumber + '</td><td>' + (student.name || 'N/A') + '</td><td>' + (busNumber || 'Not Assigned') + '</td><td>' + (student.boardingPoint || 'N/A') + '</td><td>₹' + (student.busFee || 0) + '</td><td>' + (student.phone || 'N/A') + '</td><td><span class="badge ' + feeStatus.badge + '">' + feeStatus.status + '</span></td><td><div class="flex gap-1"><button class="btn btn-action-edit py-1 px-2 rounded text-white text-xs" title="Edit" onclick="editStudent(\'' + student.rollNumber + '\')"><i class="fas fa-edit"></i></button><button class="btn btn-action-move py-1 px-2 rounded text-white text-xs" title="Move" onclick="openMoveModal(\'' + student.rollNumber + '\')"><i class="fas fa-exchange-alt"></i></button><button class="btn btn-action-delete py-1 px-2 rounded text-white text-xs" title="Delete" onclick="deleteStudent(\'' + student.rollNumber + '\')"><i class="fas fa-trash"></i></button></div></td></tr>';
             }).join('');
         }
 
@@ -711,7 +760,7 @@
                 var paid = fee.paid || 0;
                 var due = total - paid;
                 var status = getFeeStatus(fee);
-                return '<tr><td>' + fee.rollNumber + '</td><td>' + (student ? student.name : 'N/A') + '</td><td>' + (bus ? bus.number : 'N/A') + '</td><td>' + (student ? student.boardingPoint : 'N/A') + '</td><td>₹' + total + '</td><td>₹' + paid + '</td><td class="' + (due > 0 ? 'text-red-600' : 'text-green-600') + '">₹' + due + '</td><td><span class="badge ' + getFeeBadgeClass(status) + '">' + status + '</span></td><td><div class="flex gap-2"><button class="btn btn-success py-1 px-2" onclick="markAsPaid(\'' + fee.rollNumber + '\')"><i class="fas fa-check"></i></button><button class="btn btn-outline py-1 px-2 text-red-500" onclick="deleteFee(\'' + fee.rollNumber + '\')"><i class="fas fa-trash"></i></button></div></td></tr>';
+return '<tr><td>' + fee.rollNumber + '</td><td>' + (student ? student.name : 'N/A') + '</td><td>' + (bus ? bus.number : 'N/A') + '</td><td>' + (student ? student.boardingPoint : 'N/A') + '</td><td>₹' + total + '</td><td>₹' + paid + '</td><td class="' + (due > 0 ? 'text-red-600' : 'text-green-600') + '">₹' + due + '</td><td><span class="badge ' + getFeeBadgeClass(status) + '">' + status + '</span></td><td><div class="flex gap-1"><button class="btn btn-success py-1 px-2 rounded text-white text-xs" title="Mark Paid" onclick="markAsPaid(\'' + fee.rollNumber + '\')"><i class="fas fa-check"></i></button><button class="btn btn-action-delete py-1 px-2 rounded text-white text-xs" title="Delete" onclick="deleteFee(\'' + fee.rollNumber + '\')"><i class="fas fa-trash"></i></button></div></td></tr>';
             }).join('');
         }
 
@@ -759,7 +808,7 @@
             tbody.innerHTML = busesData.map(function(bus) {
                 var count = studentsData.filter(function(s) { return s.busId == bus.id; }).length;
                 var hasLoc = bus.location && bus.location.lat;
-                return '<tr><td class="font-medium">Bus ' + bus.id + '</td><td>' + (bus.number || 'N/A') + '</td><td>' + (bus.route || 'N/A') + '</td><td>' + (bus.driver || 'N/A') + '</td><td>' + (bus.contact || 'N/A') + '</td><td>' + count + '</td><td><span class="badge ' + (hasLoc ? 'badge-success' : 'badge-warning') + '">' + (hasLoc ? 'Active' : 'Inactive') + '</span></td><td><div class="flex gap-2"><button class="btn btn-outline py-1 px-2" onclick="editBus(\'' + bus.id + '\')"><i class="fas fa-edit"></i></button><button class="btn btn-outline py-1 px-2 text-red-500" onclick="deleteBus(\'' + bus.id + '\')"><i class="fas fa-trash"></i></button></div></td></tr>';
+return '<tr><td class="font-medium">Bus ' + bus.id + '</td><td>' + (bus.number || 'N/A') + '</td><td>' + (bus.route || 'N/A') + '</td><td>' + (bus.driver || 'N/A') + '</td><td>' + (bus.contact || 'N/A') + '</td><td>' + count + '</td><td><span class="badge ' + (hasLoc ? 'badge-success' : 'badge-warning') + '">' + (hasLoc ? 'Active' : 'Inactive') + '</span></td><td><div class="flex gap-1"><button class="btn btn-action-edit py-1 px-2 rounded text-white text-xs" title="Edit" onclick="editBus(\'' + bus.id + '\')"><i class="fas fa-edit"></i></button><button class="btn btn-action-delete py-1 px-2 rounded text-white text-xs" title="Delete" onclick="deleteBus(\'' + bus.id + '\')"><i class="fas fa-trash"></i></button></div></td></tr>';
             }).join('');
             document.getElementById('total-buses').textContent = busesData.length;
         }
@@ -774,23 +823,52 @@
             }).join('');
         }
 
-        function updateBusDropdowns() {
+function updateBusDropdowns() {
             updateBusFilters();
+            updateNotificationStudentDropdown();
+        }
+        
+        function updateNotificationStudentDropdown() {
+            var selOpts = '<option value="">Select Student</option>';
+            studentsData.forEach(function(s) {
+                selOpts += '<option value="' + s.rollNumber + '">' + (s.name || s.rollNumber) + ' (' + s.rollNumber + ')</option>';
+            });
+            document.getElementById('notification-student').innerHTML = selOpts;
         }
 
-        function sendNotification() {
+function sendNotification() {
             var type = document.getElementById('notification-type').value;
             var target = document.getElementById('notification-target').value;
             var message = document.getElementById('notification-message').value.trim();
             if (!message) { showToast('Enter message', 'error'); return; }
             var data = { type: type, message: message, timestamp: Date.now(), targetType: target };
-            if (target === 'bus') { data.busId = document.getElementById('notification-bus').value; }
-            else if (target === 'individual') { data.rollNumber = document.getElementById('notification-student').value; }
-            firebase.database().ref('notifications').push(data).then(function() {
-                showToast('Notification sent!', 'success');
-                document.getElementById('notification-message').value = '';
-                loadNotifications();
-            }).catch(function() { showToast('Failed to send', 'error'); });
+            
+            if (target === 'all') {
+                // Save to main notifications for all
+                firebase.database().ref('notifications').push(data).then(function() {
+                    showToast('Notification sent to all!', 'success');
+                    document.getElementById('notification-message').value = '';
+                    loadNotifications();
+                }).catch(function() { showToast('Failed to send', 'error'); });
+            } else if (target === 'bus') {
+                var busId = document.getElementById('notification-bus').value;
+                data.busId = busId;
+                // Save to bus-specific notifications (students in that bus will receive it)
+                firebase.database().ref('busNotifications/bus' + busId).push(data).then(function() {
+                    showToast('Notification sent to Bus ' + busId + '!', 'success');
+                    document.getElementById('notification-message').value = '';
+                    loadNotifications();
+                }).catch(function() { showToast('Failed to send', 'error'); });
+            } else if (target === 'individual') {
+                var rollNumber = document.getElementById('notification-student').value;
+                data.rollNumber = rollNumber;
+                // Save to student-specific notifications
+                firebase.database().ref('studentNotifications/' + rollNumber).push(data).then(function() {
+                    showToast('Notification sent to ' + rollNumber + '!', 'success');
+                    document.getElementById('notification-message').value = '';
+                    loadNotifications();
+                }).catch(function() { showToast('Failed to send', 'error'); });
+            }
         }
 
         function openModal(type) {
